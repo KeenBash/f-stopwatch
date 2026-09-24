@@ -1,0 +1,35 @@
+# Dart / Flutter
+.dart_tool/
+.packages
+build/
+pubspec.lock
+.flutter-plugins-dependencies
+
+# 本会话构建日志
+build_log.txt
+*.log
+
+# Android
+.android/
+*.iml
+local.properties
+android/.gradle/
+android/app/.cxx/
+android/app/build/
+
+# Windows
+windows/flutter/ephemeral/
+windows/flutter/generated_plugin_registrant.*
+windows/runner/*.exe
+windows/runner/*.exe.manifest
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# 本机环境
+.env

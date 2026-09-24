@@ -1,0 +1,25 @@
+# Flutter / Gradle build artifacts
+/build/
+/.gradle
+/captures/
+/caches/
+
+.gradle/
+*.iml
+local.properties
+.idea/
+
+gradle-wrapper.jar
+/gradlew
+/gradlew.bat
+/local.properties
+GeneratedPluginRegistrant.java
+.cxx/
+.kotlin/
+.DS_Store
+
+# Remember to never publicly share your keystore.
+# See https://flutter.dev/to/reference-keystore
+key.properties
+**/*.keystore
+**/*.jks

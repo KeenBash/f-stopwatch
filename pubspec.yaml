@@ -1,0 +1,29 @@
+name: f_stopwatch
+description: 跨端(Windows + Android)计时/停表应用：Windows 全局热键 + 安卓悬浮窗。
+publish_to: "none"
+version: 1.0.0
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  hotkey_manager: ^0.2.2
+  shared_preferences: ^2.2.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.14.1
+
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "tool_logo_1024.png"
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "tool_logo_1024.png"
+
+flutter:
+  uses-material-design: true
