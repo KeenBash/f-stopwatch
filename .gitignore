@@ -33,3 +33,5 @@ windows/runner/*.exe.manifest
 
 # 本机环境
 .env
+
+.trae/
