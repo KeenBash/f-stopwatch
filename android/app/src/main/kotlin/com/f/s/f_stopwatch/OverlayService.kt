@@ -14,6 +14,8 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -47,6 +49,7 @@ class OverlayService : Service() {
     private var unlocked: Boolean = false
     private var toggleBtn: ImageButton? = null
     private var lockBtn: ImageButton? = null
+    private var vibrate: Boolean = false
 
     // 计次列表浮窗
     private var listView: LinearLayout? = null
@@ -98,9 +101,9 @@ class OverlayService : Service() {
         }
 
         /** 更新悬浮窗配置。 */
-        fun updateConfig(fontColor: Int, sizeScale: Float, bgAlpha: Int) {
+        fun updateConfig(fontColor: Int, sizeScale: Float, bgAlpha: Int, vibrate: Boolean) {
             instance?.runOnUiThread {
-                instance?.applyConfig(fontColor, sizeScale, bgAlpha)
+                instance?.applyConfig(fontColor, sizeScale, bgAlpha, vibrate)
             }
         }
 
@@ -239,6 +242,7 @@ class OverlayService : Service() {
             setOnClickListener {
                 listShown = false
                 removeListWindow()
+                vibrateClick()
                 OverlayController.emitButton("stop")
             }
         }
@@ -272,9 +276,9 @@ class OverlayService : Service() {
         }
 
         // 操作按钮行：暂停/计次/重置（统一图标风格）
-        toggleBtn = iconButton(R.drawable.ic_play) { OverlayController.emitButton("toggle") }
-        val lapBtn = iconButton(R.drawable.ic_flag) { OverlayController.emitButton("lap") }
-        val resetBtn = iconButton(R.drawable.ic_reset) { OverlayController.emitButton("reset") }
+        toggleBtn = iconButton(R.drawable.ic_play) { vibrateClick(); OverlayController.emitButton("toggle") }
+        val lapBtn = iconButton(R.drawable.ic_flag) { vibrateClick(); OverlayController.emitButton("lap") }
+        val resetBtn = iconButton(R.drawable.ic_reset) { vibrateClick(); OverlayController.emitButton("reset") }
 
         val btnRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -429,6 +433,20 @@ class OverlayService : Service() {
         if (d == null) return
         val wrapped = DrawableCompat.wrap(d)
         DrawableCompat.setTint(wrapped, color)
+    }
+
+    /** 悬浮窗按钮点击触感反馈：直接调用系统 Vibrator，不依赖窗口焦点(国产ROM更稳定)。 */
+    private fun vibrateClick() {
+        if (!vibrate) return
+        runCatching {
+            val vib = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vib.vibrate(VibrationEffect.createOneShot(35, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                vib.vibrate(35)
+            }
+        }
     }
 
     // ---------- 拖动 + 锁定 ----------
@@ -668,10 +686,11 @@ class OverlayService : Service() {
 
     // ---------- 配置 ----------
 
-    private fun applyConfig(fontColor: Int, sizeScale: Float, bgAlpha: Int) {
+    private fun applyConfig(fontColor: Int, sizeScale: Float, bgAlpha: Int, vibrate: Boolean) {
         this.fontColor = fontColor
         this.sizeScale = sizeScale
         this.bgAlpha = bgAlpha
+        this.vibrate = vibrate
         // 配置变化时重建悬浮窗以应用尺寸/颜色/透明度
         val p = overlayLayoutParams
         val oldX = p?.x ?: 0

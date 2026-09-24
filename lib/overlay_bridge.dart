@@ -37,17 +37,19 @@ class OverlayBridge {
     } catch (_) {/* 忽略 */}
   }
 
-  /// Dart → Native：下发悬浮窗配置（字体颜色 ARGB、大小缩放、背景透明度 0-255）。
+  /// Dart → Native：下发悬浮窗配置（字体颜色 ARGB、大小缩放、背景透明度 0-255、按钮振动开关）。
   static Future<void> updateConfig({
     required int fontColor,
     required double sizeScale,
     required int bgAlpha,
+    required bool vibrate,
   }) async {
     try {
       await _method.invokeMethod<void>('updateConfig', <String, Object>{
         'fontColor': fontColor,
         'sizeScale': sizeScale,
         'bgAlpha': bgAlpha,
+        'vibrate': vibrate,
       });
     } catch (_) {/* 忽略 */}
   }

@@ -81,7 +81,8 @@ object OverlayController {
                 val fontColor = (m?.get("fontColor") as? Number)?.toInt() ?: -0x1
                 val sizeScaleOffset = (m?.get("sizeScale") as? Number)?.toFloat() ?: 1f
                 val bgAlpha = (m?.get("bgAlpha") as? Number)?.toInt() ?: 200
-                OverlayService.updateConfig(fontColor, sizeScaleOffset, bgAlpha)
+                val vibrate = (m?.get("vibrate") as? Boolean) ?: false
+                OverlayService.updateConfig(fontColor, sizeScaleOffset, bgAlpha, vibrate)
                 result.success(null)
             }
 

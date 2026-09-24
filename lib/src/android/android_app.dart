@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../format.dart';
@@ -106,7 +105,7 @@ class _AndroidStopwatchScreenState extends State<AndroidStopwatchScreen>
         _overlayActive = true;
         if (mounted) setState(() {});
       }
-      if (_vibrate) HapticFeedback.vibrate();
+      // 振动由原生侧(OverlayService.vibrateClick)负责，更稳定(部分ROM不依赖窗口焦点)
       switch (action) {
         case 'toggle':
           _model.toggle();
@@ -154,6 +153,7 @@ class _AndroidStopwatchScreenState extends State<AndroidStopwatchScreen>
       fontColor: _fontColor,
       sizeScale: _sizeScale,
       bgAlpha: _bgAlpha,
+      vibrate: _vibrate,
     );
   }
 
