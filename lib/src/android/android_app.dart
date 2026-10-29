@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -52,21 +53,29 @@ class _AndroidStopwatchScreenState extends State<AndroidStopwatchScreen>
   int _lastLapCount = -1;
   Timer? _styleDebounce;
 
+  // 计时状态持久化：进程被省电策略/内存回收后恢复，避免悬浮窗归零
+  static const String _stateKey = 'timer_state_v1';
+  bool _stateReady = false;
+  DateTime _lastPersistAt = DateTime.fromMillisecondsSinceEpoch(0);
+  int _lastSavedLapCount = -1;
+  Future<void>? _restoreFuture;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _model.addListener(_syncOverlay);
+    _model.addListener(_onModelChanged);
     _listenOverlayButtons();
     _refreshPermission();
     _loadConfig();
+    _restoreFuture = _restoreState();
   }
 
   @override
   void dispose() {
     _styleDebounce?.cancel();
     WidgetsBinding.instance.removeObserver(this);
-    _model.removeListener(_syncOverlay);
+    _model.removeListener(_onModelChanged);
     _buttonSub?.cancel();
     _model.dispose();
     super.dispose();
@@ -74,7 +83,10 @@ class _AndroidStopwatchScreenState extends State<AndroidStopwatchScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
+    if (state == AppLifecycleState.paused) {
+      // 切后台立即落盘，减小进程被回收时的数据丢失
+      _persistState();
+    } else if (state == AppLifecycleState.resumed) {
       _refreshPermission();
       _refreshOverlayActive();
     }
@@ -87,6 +99,8 @@ class _AndroidStopwatchScreenState extends State<AndroidStopwatchScreen>
 
   /// 回到前台时核对原生悬浮窗是否真实在运行，修正主界面开关状态。
   Future<void> _refreshOverlayActive() async {
+    // 先等本地计时状态恢复，否则会把新模型的 00:00.00 推给仍在运行的悬浮窗
+    await (_restoreFuture ?? Future<void>.value());
     final active = await OverlayBridge.isOverlayActive();
     if (mounted && active != _overlayActive) {
       setState(() => _overlayActive = active);
@@ -159,7 +173,8 @@ class _AndroidStopwatchScreenState extends State<AndroidStopwatchScreen>
 
   /// 把计时状态推送到悬浮窗（主时间 + 小字行 + 按钮图标 + 计次列表）。
   void _syncOverlay() {
-    if (!_overlayActive) return;
+    // 状态未恢复完成前不推送，避免把初始的 00:00.00 覆盖到悬浮窗上
+    if (!_overlayActive || !_stateReady) return;
     if (_overlayMode == 1) {
       // 单次模式：只显示当前轮(本次)计时，小字显示第N次
       OverlayBridge.updateTotal(formatDuration(_model.lapDelta));
@@ -189,7 +204,72 @@ class _AndroidStopwatchScreenState extends State<AndroidStopwatchScreen>
     OverlayBridge.updateLaps(lines);
   }
 
+  /// 模型变化：同步悬浮窗，并把计时状态按需落盘。
+  void _onModelChanged() {
+    _syncOverlay();
+    if (!_stateReady) return;
+    final now = DateTime.now();
+    final lapChanged = _model.laps.length != _lastSavedLapCount;
+    final due = now.difference(_lastPersistAt) >= const Duration(seconds: 1);
+    // 打点/重置/暂停立即落盘，运行中最多每秒落盘一次
+    if (lapChanged || !_model.isRunning || due) {
+      _persistState();
+    }
+  }
+
+  /// 落盘当前计时状态（累计时间 + 保存时刻 + 是否运行 + 计次）。
+  Future<void> _persistState() async {
+    if (!_stateReady) return;
+    _lastPersistAt = DateTime.now();
+    _lastSavedLapCount = _model.laps.length;
+    try {
+      final p = await SharedPreferences.getInstance();
+      await p.setString(
+        _stateKey,
+        jsonEncode(<String, Object>{
+          'e': _model.elapsed.inMilliseconds,
+          't': _lastPersistAt.millisecondsSinceEpoch,
+          'r': _model.isRunning,
+          'l': _model.laps.map((d) => d.inMilliseconds).toList(),
+        }),
+      );
+    } catch (_) {
+      // 落盘失败不影响使用
+    }
+  }
+
+  /// 恢复上次保存的计时状态；若保存时为运行中，则补上被回收期间流逝的时间。
+  Future<void> _restoreState() async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      final raw = p.getString(_stateKey);
+      if (raw != null) {
+        final m = jsonDecode(raw) as Map<String, dynamic>;
+        final savedMs = (m['e'] as num).toInt();
+        final savedAt = (m['t'] as num).toInt();
+        final wasRunning = m['r'] == true;
+        final laps = (m['l'] as List<dynamic>)
+            .map((v) => Duration(milliseconds: (v as num).toInt()))
+            .toList();
+        var elapsed = Duration(milliseconds: savedMs);
+        if (wasRunning) {
+          final gap = DateTime.now().millisecondsSinceEpoch - savedAt;
+          if (gap > 0) elapsed += Duration(milliseconds: gap);
+        }
+        _model.restore(elapsed: elapsed, laps: laps, running: wasRunning);
+        _lastSavedLapCount = laps.length;
+      }
+    } catch (_) {
+      // 数据损坏时从零开始
+    }
+    _stateReady = true;
+    _lastPersistAt = DateTime.now();
+    // 恢复完成后再把真实时间推给（可能仍在运行的）悬浮窗
+    if (_overlayActive) _syncOverlay();
+  }
+
   Future<void> _startOverlay() async {
+    await (_restoreFuture ?? Future<void>.value());
     final ok = await OverlayBridge.startForeground();
     if (!ok) {
       _showPermissionPrompt();

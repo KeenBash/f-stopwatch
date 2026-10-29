@@ -51,6 +51,11 @@ class OverlayService : Service() {
     private var lockBtn: ImageButton? = null
     private var vibrate: Boolean = false
 
+    // 最近一次展示的内容：配置变更重建悬浮窗时沿用，避免重建瞬间闪回 00:00.00
+    private var lastTotal: String = "00:00.00"
+    private var lastSecondary: String = ""
+    private var lastPaused: Boolean = true
+
     // 计次列表浮窗
     private var listView: LinearLayout? = null
     private var listAdded: Boolean = false
@@ -86,12 +91,14 @@ class OverlayService : Service() {
         /** 更新悬浮窗总时间。 */
         fun updateTotal(text: String) {
             if (instance?.overlayAdded != true) return
+            instance?.lastTotal = text
             instance?.runOnUiThread { timeView?.text = text }
         }
 
         /** 同步暂停/运行状态，刷新暂停/开始图标。 */
         fun updateRunning(paused: Boolean) {
             if (instance?.overlayAdded != true) return
+            instance?.lastPaused = paused
             instance?.runOnUiThread {
                 val t = instance?.toggleBtn ?: return@runOnUiThread
                 val res = if (paused) R.drawable.ic_play else R.drawable.ic_pause
@@ -110,6 +117,7 @@ class OverlayService : Service() {
         /** 更新辅助小字行（本次计时/第N次），空串则隐藏。 */
         fun updateSecondary(text: String) {
             if (instance?.overlayAdded != true) return
+            instance?.lastSecondary = text
             instance?.runOnUiThread {
                 val v = secondaryView ?: return@runOnUiThread
                 if (text.isBlank()) {
@@ -145,8 +153,15 @@ class OverlayService : Service() {
             createChannel()
             startForeground(NOTIF_ID, buildNotification())
         }
+        // 进程被系统回收后由 START_STICKY 重建时 intent 为 null：
+        // 此时 Dart 引擎已不在，添加悬浮窗只会显示一个永远停走的 00:00.00，
+        // 反而让用户以为计时被归零，因此直接结束服务。
+        if (intent == null) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         addOverlay()
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     override fun onDestroy() {
@@ -262,21 +277,24 @@ class OverlayService : Service() {
             typeface = Typeface.MONOSPACE
             setTextColor(fontColor)
             gravity = Gravity.CENTER
-            text = "00:00.00"
+            text = lastTotal
         }
 
-        // 辅助小字行（本次计时 / 第N次），默认隐藏
+        // 辅助小字行（本次计时 / 第N次），沿用上次内容
         secondaryView = TextView(this).apply {
             textSize = 13f * sizeScale
             typeface = Typeface.MONOSPACE
             setTextColor(fontColor)
             gravity = Gravity.CENTER
-            text = ""
-            visibility = android.view.View.GONE
+            text = lastSecondary
+            visibility = if (lastSecondary.isBlank()) android.view.View.GONE
+            else android.view.View.VISIBLE
         }
 
         // 操作按钮行：暂停/计次/重置（统一图标风格）
-        toggleBtn = iconButton(R.drawable.ic_play) { vibrateClick(); OverlayController.emitButton("toggle") }
+        toggleBtn = iconButton(
+            if (lastPaused) R.drawable.ic_play else R.drawable.ic_pause
+        ) { vibrateClick(); OverlayController.emitButton("toggle") }
         val lapBtn = iconButton(R.drawable.ic_flag) { vibrateClick(); OverlayController.emitButton("lap") }
         val resetBtn = iconButton(R.drawable.ic_reset) { vibrateClick(); OverlayController.emitButton("reset") }
 

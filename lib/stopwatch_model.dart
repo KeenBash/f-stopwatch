@@ -82,6 +82,28 @@ class StopwatchModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 从持久化状态恢复（进程/引擎被系统回收后继续计时）。
+  /// [elapsed] 为恢复到的累计时间，[laps] 为各次打点的累计时间。
+  void restore({
+    required Duration elapsed,
+    required List<Duration> laps,
+    required bool running,
+  }) {
+    _stopwatch?.stop();
+    _stopwatch = null;
+    _base = elapsed;
+    _laps
+      ..clear()
+      ..addAll(laps);
+    if (running) {
+      _stopwatch = Stopwatch()..start();
+      _startTicker();
+    } else {
+      _stopTicker();
+    }
+    notifyListeners();
+  }
+
   // ---------- 计时刷新 ----------
 
   void _startTicker() {
