@@ -37,11 +37,26 @@ jobs:
         id: version
         run: echo "value=$(grep -E '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)" >> "$GITHUB_OUTPUT"
 
+      - name: Configure release signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "未配置签名 Secrets，本次将回退到 debug 签名"
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 --decode > android/keystore.jks
+          printf 'storeFile=keystore.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+            "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > android/key.properties
+
       - name: Install dependencies
         run: flutter pub get
 
-      # release 包当前使用 debug 签名（见 android/app/build.gradle.kts），
-      # 正式分发前需配置自己的 keystore。
+      # release 包使用 key.properties 配置的正式签名；CI 下由 Secrets 注入，
+      # 本地未配置 key.properties 时回退 debug 签名。
       - name: Build release APK (arm64)
         run: flutter build apk --release --target-platform android-arm64
 
