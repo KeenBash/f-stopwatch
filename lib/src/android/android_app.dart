@@ -2,11 +2,15 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../format.dart';
+import '../../history_store.dart';
 import '../../overlay_bridge.dart';
 import '../../stopwatch_model.dart';
+import '../../timer_data.dart';
+import 'history_page.dart';
 
 /// Android 端根应用。
 class AndroidStopwatchApp extends StatelessWidget {
@@ -17,6 +21,14 @@ class AndroidStopwatchApp extends StatelessWidget {
     return MaterialApp(
       title: 'F-Stopwatch',
       debugShowCheckedModeBanner: false,
+      // 中文日期选择器等系统组件需要显式启用中文本地化
+      locale: const Locale('zh', 'CN'),
+      supportedLocales: const <Locale>[Locale('zh', 'CN')],
+      localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       theme: ThemeData(
         brightness: Brightness.dark,
         colorSchemeSeed: Colors.teal,
@@ -54,11 +66,14 @@ class _AndroidStopwatchScreenState extends State<AndroidStopwatchScreen>
   Timer? _styleDebounce;
 
   // 计时状态持久化：进程被省电策略/内存回收后恢复，避免悬浮窗归零
-  static const String _stateKey = 'timer_state_v1';
+  static const String _stateKey = 'timer_state_v2';
   bool _stateReady = false;
   DateTime _lastPersistAt = DateTime.fromMillisecondsSinceEpoch(0);
   int _lastSavedLapCount = -1;
   Future<void>? _restoreFuture;
+
+  /// 本次计时的开始时间（墙上时间），用于归档记录；重置时清空。
+  DateTime? _sessionStartedAt;
 
   @override
   void initState() {
@@ -122,13 +137,13 @@ class _AndroidStopwatchScreenState extends State<AndroidStopwatchScreen>
       // 振动由原生侧(OverlayService.vibrateClick)负责，更稳定(部分ROM不依赖窗口焦点)
       switch (action) {
         case 'toggle':
-          _model.toggle();
+          _toggleTimer();
           break;
         case 'lap':
           _model.lap();
           break;
         case 'reset':
-          _model.reset();
+          _resetWithArchive();
           break;
         case 'stop':
           _overlayActive = false;
@@ -204,6 +219,41 @@ class _AndroidStopwatchScreenState extends State<AndroidStopwatchScreen>
     OverlayBridge.updateLaps(lines);
   }
 
+  /// 开始/暂停：首次开始时记录会话开始时间（用于历史归档）。
+  void _toggleTimer() {
+    if (_model.isPaused) {
+      if (_model.elapsed == Duration.zero) _sessionStartedAt = DateTime.now();
+      _model.start();
+    } else {
+      _model.pause();
+    }
+  }
+
+  /// 重置：若本次有计时内容，先归档为一条历史记录再清零。
+  void _resetWithArchive() {
+    final total = _model.elapsed;
+    if (total > Duration.zero) {
+      final end = DateTime.now();
+      unawaited(HistoryStore.add(HistoryRecord(
+        id: end.microsecondsSinceEpoch.toString(),
+        endAt: end,
+        data: TimerData(
+          elapsed: total,
+          laps: _model.laps,
+          startedAt: _sessionStartedAt ?? end.subtract(total),
+        ),
+      )));
+    }
+    _sessionStartedAt = null;
+    _model.reset();
+  }
+
+  void _openHistory() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const HistoryPage()),
+    );
+  }
+
   /// 模型变化：同步悬浮窗，并把计时状态按需落盘。
   void _onModelChanged() {
     _syncOverlay();
@@ -224,15 +274,16 @@ class _AndroidStopwatchScreenState extends State<AndroidStopwatchScreen>
     _lastSavedLapCount = _model.laps.length;
     try {
       final p = await SharedPreferences.getInstance();
-      await p.setString(
-        _stateKey,
-        jsonEncode(<String, Object>{
-          'e': _model.elapsed.inMilliseconds,
-          't': _lastPersistAt.millisecondsSinceEpoch,
-          'r': _model.isRunning,
-          'l': _model.laps.map((d) => d.inMilliseconds).toList(),
-        }),
+      final snapshot = TimerSnapshot(
+        data: TimerData(
+          elapsed: _model.elapsed,
+          laps: _model.laps,
+          startedAt: _sessionStartedAt,
+        ),
+        savedAt: _lastPersistAt,
+        running: _model.isRunning,
       );
+      await p.setString(_stateKey, jsonEncode(snapshot.toJson()));
     } catch (_) {
       // 落盘失败不影响使用
     }
@@ -244,20 +295,20 @@ class _AndroidStopwatchScreenState extends State<AndroidStopwatchScreen>
       final p = await SharedPreferences.getInstance();
       final raw = p.getString(_stateKey);
       if (raw != null) {
-        final m = jsonDecode(raw) as Map<String, dynamic>;
-        final savedMs = (m['e'] as num).toInt();
-        final savedAt = (m['t'] as num).toInt();
-        final wasRunning = m['r'] == true;
-        final laps = (m['l'] as List<dynamic>)
-            .map((v) => Duration(milliseconds: (v as num).toInt()))
-            .toList();
-        var elapsed = Duration(milliseconds: savedMs);
-        if (wasRunning) {
-          final gap = DateTime.now().millisecondsSinceEpoch - savedAt;
-          if (gap > 0) elapsed += Duration(milliseconds: gap);
-        }
-        _model.restore(elapsed: elapsed, laps: laps, running: wasRunning);
-        _lastSavedLapCount = laps.length;
+        final snapshot =
+            TimerSnapshot.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+        final now = DateTime.now();
+        // 保存时为运行中则补上被回收期间流逝的时间
+        final data = snapshot.resumedData(now);
+        _model.restore(
+          elapsed: data.elapsed,
+          laps: data.laps,
+          running: snapshot.running,
+        );
+        _lastSavedLapCount = data.laps.length;
+        _sessionStartedAt = data.elapsed > Duration.zero
+            ? (data.startedAt ?? now.subtract(data.elapsed))
+            : null;
       }
     } catch (_) {
       // 数据损坏时从零开始
@@ -302,6 +353,11 @@ class _AndroidStopwatchScreenState extends State<AndroidStopwatchScreen>
         title: const Text('F-Stopwatch'),
         actions: <Widget>[
           IconButton(
+            tooltip: '历史记录',
+            icon: const Icon(Icons.history),
+            onPressed: _openHistory,
+          ),
+          IconButton(
             tooltip: '悬浮窗设置',
             icon: const Icon(Icons.picture_in_picture_alt),
             onPressed: _openSettings,
@@ -335,7 +391,7 @@ class _AndroidStopwatchScreenState extends State<AndroidStopwatchScreen>
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: <Widget>[
                       FilledButton.icon(
-                        onPressed: _model.toggle,
+                        onPressed: _toggleTimer,
                         icon: Icon(
                             _model.isPaused ? Icons.play_arrow : Icons.pause),
                         label: Text(_model.isPaused ? '开始' : '暂停'),
@@ -348,7 +404,7 @@ class _AndroidStopwatchScreenState extends State<AndroidStopwatchScreen>
                       ),
                       const SizedBox(width: 12),
                       OutlinedButton.icon(
-                        onPressed: _model.reset,
+                        onPressed: _resetWithArchive,
                         icon: const Icon(Icons.refresh),
                         label: const Text('重置'),
                       ),
