@@ -162,7 +162,7 @@ class _AndroidStopwatchScreenState extends State<AndroidStopwatchScreen>
       _fontColor = p.getInt('ov_font_color') ?? 0xFFFFFFFF;
       _sizeScale = (p.getDouble('ov_size') ?? 1.0).clamp(0.6, 1.6);
       _bgAlpha = (p.getInt('ov_bg_alpha') ?? 200).clamp(0, 255);
-      _overlayMode = p.getInt('ov_mode') ?? 0;
+      _overlayMode = (p.getInt('ov_mode') ?? 0) == 1 ? 1 : 0;
       _vibrate = p.getBool('ov_vibrate') ?? false;
     });
   }
@@ -328,9 +328,19 @@ class _AndroidStopwatchScreenState extends State<AndroidStopwatchScreen>
       if (mounted) setState(() => _overlayActive = true);
       // 原生端重启后 lastLaps 已清空，强制下次 _syncLapList 重新推送全部计次
       _lastLapCount = -1;
+      // 等服务真正创建悬浮窗后再下发配置/文本，否则首帧配置与时间会丢失
+      await _waitOverlayReady();
       // 先下发配置(原生会重建悬浮窗)，再同步计时文本，避免“本次”小字被重建清掉后突兀出现
       await _pushConfig();
       _syncOverlay();
+    }
+  }
+
+  /// 等待原生悬浮窗创建完成（最多约 1 秒），避免启动瞬间的配置/文本推送被丢弃。
+  Future<void> _waitOverlayReady() async {
+    for (var i = 0; i < 10; i++) {
+      if (await OverlayBridge.isOverlayActive()) return;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
     }
   }
 
@@ -608,6 +618,7 @@ class _AndroidStopwatchScreenState extends State<AndroidStopwatchScreen>
                         _sizeScale = 1.0;
                         _bgAlpha = 200;
                         _overlayMode = 0;
+                        _vibrate = false;
                         apply();
                       },
                       icon: const Icon(Icons.settings_backup_restore),

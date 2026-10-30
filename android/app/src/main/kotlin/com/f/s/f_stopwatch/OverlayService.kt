@@ -377,32 +377,33 @@ class OverlayService : Service() {
         }
     }
 
+    /** 当前屏幕可用宽高（含状态栏，悬浮窗坐标系）。 */
+    private fun screenSize(): Pair<Int, Int> {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val b = windowManager.currentWindowMetrics.bounds
+            b.width() to b.height()
+        } else {
+            @Suppress("DEPRECATION")
+            val p = android.graphics.Point()
+            runCatching { windowManager.defaultDisplay.getSize(p) }
+            var w = p.x
+            var h = p.y
+            if (w <= 0 || h <= 0) {
+                val dm = resources.displayMetrics
+                w = dm.widthPixels
+                h = dm.heightPixels
+            }
+            w to h
+        }
+    }
+
     /**
      * 把 params.x/y 钳制到屏幕范围内，保证至少约 60px 悬浮窗可见可抓住。
      */
     private fun clampToScreen(params: WindowManager.LayoutParams, viewW: Int, viewH: Int) {
         val w = if (viewW > 0) viewW else dp(200)
         val h = if (viewH > 0) viewH else dp(120)
-        val screenW: Int
-        val screenH: Int
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val b = windowManager.currentWindowMetrics.bounds
-            screenW = b.width()
-            screenH = b.height()
-        } else {
-            @Suppress("DEPRECATION")
-            val p = android.graphics.Point()
-            runCatching { windowManager.defaultDisplay.getSize(p) }
-            var ww = p.x
-            var hh = p.y
-            if (ww <= 0 || hh <= 0) {
-                val dm = resources.displayMetrics
-                ww = dm.widthPixels
-                hh = dm.heightPixels
-            }
-            screenW = ww
-            screenH = hh
-        }
+        val (screenW, screenH) = screenSize()
         val minX = -(w - dp(60)).coerceAtLeast(0)
         val maxX = (screenW - dp(60)).coerceAtLeast(minX)
         params.x = params.x.coerceIn(minX, maxX)
@@ -644,18 +645,7 @@ class OverlayService : Service() {
         val ovH = overlayView?.height?.takeIf { it > 0 } ?: dp(140)
         var x = mainLp.x + (ovW - w) / 2
         var y = mainLp.y + ovH + dp(6)
-        val screenW: Int
-        val screenH: Int
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val b = windowManager.currentWindowMetrics.bounds
-            screenW = b.width()
-            screenH = b.height()
-        } else {
-            val p = android.graphics.Point()
-            runCatching { windowManager.defaultDisplay.getSize(p) }
-            screenW = if (p.x > 0) p.x else resources.displayMetrics.widthPixels
-            screenH = if (p.y > 0) p.y else resources.displayMetrics.heightPixels
-        }
+        val (screenW, screenH) = screenSize()
         x = x.coerceIn(dp(8), (screenW - w).coerceAtLeast(dp(8)))
         y = y.coerceIn(0, (screenH - h).coerceAtLeast(0))
         lp.x = x
@@ -691,10 +681,16 @@ class OverlayService : Service() {
         slot.orientation = LinearLayout.HORIZONTAL
         slot.gravity = Gravity.CENTER
         if (child != null) {
-            slot.addView(child, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ))
+            // 保留按钮自身的尺寸(随 sizeScale 缩放)，否则大小配置只影响文字
+            val lp = child.layoutParams
+            slot.addView(
+                child,
+                if (lp != null) LinearLayout.LayoutParams(lp.width, lp.height)
+                else LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
         }
         return slot
     }
@@ -709,6 +705,8 @@ class OverlayService : Service() {
         this.sizeScale = sizeScale
         this.bgAlpha = bgAlpha
         this.vibrate = vibrate
+        // addOverlay() 会关闭列表浮窗，这里先记住展开状态，重建后恢复
+        val keepList = listShown
         // 配置变化时重建悬浮窗以应用尺寸/颜色/透明度
         val p = overlayLayoutParams
         val oldX = p?.x ?: 0
@@ -717,8 +715,25 @@ class OverlayService : Service() {
         overlayLayoutParams?.x = oldX
         overlayLayoutParams?.y = oldY
         persistPos(oldX, oldY)
+        // 尺寸/字体变化后窗口可能变大：若右侧或底部越界，平移回屏幕内，避免文字被裁切
+        overlayView?.post {
+            val v = overlayView ?: return@post
+            val lp = overlayLayoutParams ?: return@post
+            val (sw, sh) = screenSize()
+            val nx = lp.x.coerceIn(0, (sw - v.width).coerceAtLeast(0))
+            val ny = lp.y.coerceIn(0, (sh - v.height).coerceAtLeast(0))
+            if (nx != lp.x || ny != lp.y) {
+                lp.x = nx
+                lp.y = ny
+                persistPos(nx, ny)
+                runCatching { windowManager.updateViewLayout(v, lp) }
+            }
+        }
         // 列表浮窗若在展示则随主浮窗重建、沿用新背景透明度
-        if (listShown) buildListWindow()
+        if (keepList) {
+            listShown = true
+            buildListWindow()
+        }
     }
 
     private fun removeOverlay() {

@@ -107,13 +107,6 @@ adb shell "am start -n com.f.s.f_stopwatch/.MainActivity"
   ```powershell
   keytool -genkeypair -v -keystore android\keystore.jks -alias f_stopwatch -keyalg RSA -keysize 2048 -validity 10000
   ```
-- **GitHub Actions**：在仓库 `Settings → Secrets and variables → Actions` 添加 `KEYSTORE_BASE64`、`STORE_PASSWORD`、`KEY_ALIAS`、`KEY_PASSWORD`。keystore 转 base64：
-
-  ```powershell
-  [Convert]::ToBase64String([IO.File]::ReadAllBytes("android\keystore.jks")) | Set-Clipboard
-  ```
-
-  将 master 合并到 `package` 分支并 push，会触发 `Android Release` 工作流，产出签名的 arm64 release APK。
 
 ## 五、Windows / Web（待完善）
 
