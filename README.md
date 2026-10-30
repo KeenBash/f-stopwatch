@@ -80,7 +80,7 @@ flutter build apk --release    # 发布包
 > flutter build apk --release --split-per-abi                    # 按架构拆分发市场
 > ```
 >
-> release 默认走 debug 签名，正式上架前需自行配置 release keystore。
+> release 使用 `android/key.properties` 配置的正式签名；未配置时回退 debug 签名（见下节）。
 
 **4) 安装并启动**
 
@@ -88,6 +88,32 @@ flutter build apk --release    # 发布包
 adb install -r build\app\outputs\flutter-apk\app-debug.apk
 adb shell "am start -n com.f.s.f_stopwatch/.MainActivity"
 ```
+
+**5) 签名（keystore）**
+
+- `android/keystore.jks` 与 `android/key.properties` **不入库**（已在 `android/.gitignore` 排除），请自行备份。
+- `android/key.properties` 格式：
+
+  ```
+  storeFile=keystore.jks
+  storePassword=<密码>
+  keyAlias=f_stopwatch
+  keyPassword=<密码>
+  ```
+
+  存在该文件时 release 自动使用正式签名；不存在则回退 debug 签名。
+- 重新生成 keystore：
+
+  ```powershell
+  keytool -genkeypair -v -keystore android\keystore.jks -alias f_stopwatch -keyalg RSA -keysize 2048 -validity 10000
+  ```
+- **GitHub Actions**：在仓库 `Settings → Secrets and variables → Actions` 添加 `KEYSTORE_BASE64`、`STORE_PASSWORD`、`KEY_ALIAS`、`KEY_PASSWORD`。keystore 转 base64：
+
+  ```powershell
+  [Convert]::ToBase64String([IO.File]::ReadAllBytes("android\keystore.jks")) | Set-Clipboard
+  ```
+
+  将 master 合并到 `package` 分支并 push，会触发 `Android Release` 工作流，产出签名的 arm64 release APK。
 
 ## 五、Windows / Web（待完善）
 
